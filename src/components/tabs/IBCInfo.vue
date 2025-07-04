@@ -141,11 +141,11 @@ const copyToClipboard = async (text) => {
 
 const queryDenomTrace = async (hash, restEndpoint) => {
   try {
-    const response = await fetch(`${restEndpoint}/ibc/apps/transfer/v1/denom_traces/${hash}`)
+    const response = await fetch(`${restEndpoint}/ibc/apps/transfer/v1/denoms/${hash}`)
     if (!response.ok) return null
     
     const data = await response.json()
-    return data.denom_trace
+    return data.denom
   } catch (error) {
     console.error(`Failed to query denom trace for ${hash}:`, error)
     return null
@@ -165,78 +165,98 @@ const queryDenomMetadata = async (denom, restEndpoint) => {
 }
 
 const fetchIBCTokenInfo = async () => {
-  if (!networkConfig.value.faucetAddresses?.cosmos || !config.value) return
-  
   loading.value = true
   error.value = ''
   
   try {
-    const restEndpoint = config.value.blockchain.endpoints.rest_endpoint
-    const cosmosAddress = networkConfig.value.faucetAddresses.cosmos
+    const restEndpoint = networkConfig.value.cosmos?.rest || config.value?.blockchain?.endpoints?.rest_endpoint
+    const cosmosAddress = networkConfig.value.faucetAddresses?.cosmos
+    
+    if (!restEndpoint || !cosmosAddress) {
+      console.log('Missing required config:', { restEndpoint, cosmosAddress })
+      error.value = 'Configuration not loaded yet'
+      return
+    }
     
     // Fetch all balances
+    console.log('Fetching IBC tokens from:', `${restEndpoint}/cosmos/bank/v1beta1/balances/${cosmosAddress}`)
     const balancesResponse = await fetch(`${restEndpoint}/cosmos/bank/v1beta1/balances/${cosmosAddress}`)
     const balancesData = await balancesResponse.json()
+    console.log('Balances response:', balancesData)
     
     if (!balancesData.balances || !Array.isArray(balancesData.balances)) {
       throw new Error('Failed to fetch balances')
     }
     
-    // Filter IBC tokens
-    const ibcBalances = balancesData.balances.filter(b => b.denom.startsWith('ibc/'))
+    // Filter IBC tokens (case-insensitive)
+    const ibcBalances = balancesData.balances.filter(b => b.denom.toLowerCase().startsWith('ibc/'))
+    
+    // Get token info from config
+    const nativeTokens = config.value?.nativeTokens || []
     
     // Fetch detailed info for each IBC token
     const tokenPromises = ibcBalances.map(async (balance) => {
-      const hash = balance.denom.replace('ibc/', '')
+      const denomLower = balance.denom.toLowerCase()
       
-      // Query denom trace
-      const trace = await queryDenomTrace(hash, restEndpoint)
-      if (!trace) return null
+      // Find matching token config
+      const tokenConfig = nativeTokens.find(t => 
+        t.denom && t.denom.toLowerCase() === denomLower
+      )
       
-      // Query metadata
-      const metadata = await queryDenomMetadata(balance.denom, restEndpoint)
-      
-      // Determine token info
-      let name, symbol, decimals, sourceChain
-      
-      if (metadata) {
-        name = metadata.name || metadata.display || trace.base_denom
-        symbol = metadata.symbol || metadata.display || trace.base_denom.replace(/^u/, '').toUpperCase()
-        decimals = metadata.denom_units?.find(u => u.denom === metadata.display)?.exponent || 6
-      } else {
-        // Fallback: derive from base denom
-        const baseDenom = trace.base_denom
-        if (baseDenom.startsWith('u')) {
-          symbol = baseDenom.substring(1).toUpperCase()
-          name = symbol
-        } else {
-          symbol = baseDenom.toUpperCase()
-          name = baseDenom
+      if (tokenConfig) {
+        // Use info from config
+        return {
+          denom: balance.denom,
+          baseDenom: tokenConfig.symbol?.toLowerCase() || 'unknown',
+          name: tokenConfig.name || 'Unknown Token',
+          symbol: tokenConfig.symbol || 'UNKNOWN',
+          decimals: tokenConfig.decimals || 6,
+          balance: balance.amount,
+          path: tokenConfig.description || '',
+          channels: tokenConfig.description?.match(/channel-\d+/gi) || [],
+          sourceChain: tokenConfig.description?.includes('Osmosis') ? 'Osmosis' : 
+                       tokenConfig.description?.includes('channel') ? 'IBC Chain' : 'Unknown',
+          hash: balance.denom.replace(/ibc\//i, '')
         }
-        decimals = 6
-      }
-      
-      // Extract channels from path
-      const channels = trace.path ? trace.path.split('/').filter((_, i) => i % 2 === 1) : []
-      
-      // Try to determine source chain from path or base denom
-      if (trace.path) {
-        const pathParts = trace.path.split('/')
-        sourceChain = pathParts[0] === 'transfer' && pathParts.length >= 2 ? 
-          `Channel ${pathParts[1]}` : 'Unknown'
-      }
-      
-      return {
-        denom: balance.denom,
-        baseDenom: trace.base_denom,
-        name,
-        symbol,
-        decimals,
-        balance: balance.amount,
-        path: trace.path,
-        channels,
-        sourceChain,
-        hash
+      } else {
+        // Fallback for unknown IBC tokens
+        const hash = balance.denom.replace(/ibc\//i, '')
+        
+        // Try to query denom trace (might fail)
+        const trace = await queryDenomTrace(hash, restEndpoint)
+        
+        if (trace) {
+          const baseDenom = trace.base || 'unknown'
+          const channels = trace.trace?.map(t => t.channel_id) || []
+          const symbol = baseDenom.startsWith('u') ? baseDenom.substring(1).toUpperCase() : baseDenom.toUpperCase()
+          
+          return {
+            denom: balance.denom,
+            baseDenom: baseDenom,
+            name: symbol,
+            symbol: symbol,
+            decimals: 6,
+            balance: balance.amount,
+            path: channels.length > 0 ? `transfer/${channels.join('/transfer/')}` : '',
+            channels: channels,
+            sourceChain: symbol === 'OSMO' ? 'Osmosis' : 'IBC Chain',
+            hash
+          }
+        } else {
+          // Complete fallback
+          return {
+            denom: balance.denom,
+            baseDenom: 'unknown',
+            name: 'Unknown IBC Token',
+            symbol: 'IBC',
+            decimals: 6,
+            balance: balance.amount,
+            path: '',
+            channels: [],
+            sourceChain: 'Unknown',
+            hash
+          }
+        }
       }
     })
     
@@ -255,7 +275,11 @@ const refreshIBCInfo = () => {
   fetchIBCTokenInfo()
 }
 
-onMounted(() => {
+onMounted(async () => {
+  // Wait a bit for config to be loaded
+  if (!networkConfig.value.faucetAddresses?.cosmos) {
+    await new Promise(resolve => setTimeout(resolve, 1000))
+  }
   fetchIBCTokenInfo()
 })
 </script>
