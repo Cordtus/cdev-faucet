@@ -1808,8 +1808,17 @@ async function initializeFaucet() {
   console.log('\n Validating and verifying contract addresses...');
 
   // Import and run the contract verifier
-  const { default: ContractVerifier } = await import('./scripts/verify-contracts.js');
-  const verifier = new ContractVerifier();
+  const { ContractValidator } = await import('./src/ContractValidator.js');
+  // Create a wrapper object for the secure key manager functions
+  const keyManager = {
+    initialize: initializeSecureKeys,
+    getEvmAddress,
+    getCosmosAddress,
+    getPrivateKey,
+    getPrivateKeyBytes,
+    getPublicKeyBytes
+  };
+  const verifier = new ContractValidator(conf, keyManager);
 
   // Enable auto-redeployment if specified
   const autoRedeploy = process.env.AUTO_REDEPLOY === 'true';
@@ -1817,7 +1826,8 @@ async function initializeFaucet() {
     console.log(' Auto-redeployment enabled');
   }
 
-  const isValid = await verifier.verify(autoRedeploy);
+  await verifier.initialize();
+  const isValid = await verifier.validateAllContracts();
 
   if (!isValid) {
     console.error('\n Contract verification failed!');
