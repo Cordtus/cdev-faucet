@@ -32,21 +32,20 @@
 
     <div v-else class="ibc-tokens-grid">
       <div 
-        v-for="token in ibcTokens" 
+        v-for="(token, index) in ibcTokens" 
         :key="token.denom"
         class="ibc-token-card"
+        :class="{ 'expanded': expandedCards[index] }"
       >
-        <div class="token-header">
+        <div class="token-header" @click="toggleCard(index)">
           <div class="token-identity">
             <span class="token-symbol">{{ token.symbol }}</span>
             <span class="token-name">{{ token.name }}</span>
           </div>
-          <span class="token-balance" v-if="token.balance">
-            {{ formatBalance(token.balance, token.decimals) }}
-          </span>
+          <i class="fas fa-chevron-down expand-icon" :class="{ 'rotated': expandedCards[index] }"></i>
         </div>
 
-        <div class="token-details">
+        <div class="token-details" v-show="expandedCards[index]">
           <div class="detail-item">
             <span class="detail-label">Base Denom:</span>
             <code class="detail-value" @click="copyToClipboard(token.baseDenom)">
@@ -100,6 +99,7 @@ const { networkConfig, config } = useConfig()
 const ibcTokens = ref([])
 const loading = ref(false)
 const error = ref('')
+const expandedCards = ref({})
 
 const formatIBCDenom = (denom) => {
   if (!denom) return ''
@@ -137,6 +137,10 @@ const copyToClipboard = async (text) => {
   } catch (err) {
     console.error('Failed to copy:', err)
   }
+}
+
+const toggleCard = (index) => {
+  expandedCards.value[index] = !expandedCards.value[index]
 }
 
 const queryDenomTrace = async (hash, restEndpoint) => {
@@ -181,6 +185,12 @@ const fetchIBCTokenInfo = async () => {
     // Fetch all balances
     console.log('Fetching IBC tokens from:', `${restEndpoint}/cosmos/bank/v1beta1/balances/${cosmosAddress}`)
     const balancesResponse = await fetch(`${restEndpoint}/cosmos/bank/v1beta1/balances/${cosmosAddress}`)
+    
+    if (!balancesResponse.ok) {
+      console.error('Failed to fetch balances:', balancesResponse.status, balancesResponse.statusText)
+      throw new Error(`Failed to fetch balances: ${balancesResponse.status}`)
+    }
+    
     const balancesData = await balancesResponse.json()
     console.log('Balances response:', balancesData)
     
@@ -263,6 +273,12 @@ const fetchIBCTokenInfo = async () => {
     const results = await Promise.all(tokenPromises)
     ibcTokens.value = results.filter(t => t !== null)
     
+    // Initialize all cards as collapsed
+    expandedCards.value = {}
+    ibcTokens.value.forEach((_, index) => {
+      expandedCards.value[index] = false
+    })
+    
   } catch (err) {
     console.error('Error fetching IBC token info:', err)
     error.value = 'Failed to load IBC token information'
@@ -276,10 +292,17 @@ const refreshIBCInfo = () => {
 }
 
 onMounted(async () => {
+  console.log('IBCInfo mounted')
+  console.log('networkConfig:', networkConfig.value)
+  console.log('config:', config.value)
+  
   // Wait a bit for config to be loaded
   if (!networkConfig.value.faucetAddresses?.cosmos) {
+    console.log('Waiting for config to load...')
     await new Promise(resolve => setTimeout(resolve, 1000))
   }
+  
+  console.log('Fetching IBC token info...')
   fetchIBCTokenInfo()
 })
 </script>
@@ -341,10 +364,15 @@ onMounted(async () => {
 .token-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 1rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border-color);
+  align-items: center;
+  padding: 1rem 0;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.2s ease;
+}
+
+.token-header:hover {
+  color: var(--cosmos-accent);
 }
 
 .token-identity {
@@ -364,16 +392,34 @@ onMounted(async () => {
   color: var(--text-secondary);
 }
 
-.token-balance {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--cosmos-accent);
+.expand-icon {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+}
+
+.expand-icon.rotated {
+  transform: rotate(180deg);
 }
 
 .token-details {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .detail-item {
@@ -453,6 +499,7 @@ onMounted(async () => {
 @media (max-width: 768px) {
   .ibc-tokens-grid {
     grid-template-columns: 1fr;
+    gap: 0.75rem;
   }
   
   .ibc-header {
@@ -463,6 +510,27 @@ onMounted(async () => {
   
   .section-title {
     font-size: 1rem;
+  }
+  
+  .ibc-token-card {
+    padding: 1rem;
+  }
+  
+  .token-header {
+    padding: 0.75rem 0;
+  }
+  
+  .token-symbol {
+    font-size: 1rem;
+  }
+  
+  .detail-value {
+    font-size: 0.75rem;
+  }
+  
+  .channels-flow {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

@@ -1267,11 +1267,8 @@ async function checkRecipientBalances(address, addressType) {
             decimals: token.decimals
           });
         } else if (token.denom === 'uatom' && token.erc20_contract === '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE') {
-          // Use ERC20 interface for WATOM (cleaner 6-decimal representation)
-          const erc20ABI = ["function balanceOf(address owner) view returns (uint256)"];
-          const tokenContract = new Contract(token.erc20_contract, erc20ABI, ethProvider);
-          const balance = await tokenContract.balanceOf(address);
-
+          // WATOM is actually native ATOM on EVM, check native balance
+          const balance = await ethProvider.getBalance(address);
           balances.push({
             denom: token.denom,
             current_amount: balance.toString(),
