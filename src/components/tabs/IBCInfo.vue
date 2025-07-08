@@ -67,23 +67,20 @@
             <span class="detail-value path-value">{{ token.path }}</span>
           </div>
 
-          <div v-if="token.channels && token.channels.length" class="detail-item">
-            <span class="detail-label">Channels:</span>
-            <div class="channels-flow">
-              <span 
-                v-for="(channel, idx) in token.channels" 
-                :key="idx"
-                class="channel-badge"
-              >
-                {{ channel }}
-                <i v-if="idx < token.channels.length - 1" class="fas fa-arrow-right channel-arrow"></i>
-              </span>
-            </div>
-          </div>
 
           <div v-if="token.sourceChain" class="detail-item">
             <span class="detail-label">Source Chain:</span>
             <span class="detail-value chain-name">{{ token.sourceChain }}</span>
+          </div>
+
+          <div v-if="token.channelInfo" class="detail-item">
+            <span class="detail-label">Connection:</span>
+            <span class="detail-value">{{ token.channelInfo.connectionId || 'Unknown' }}</span>
+          </div>
+
+          <div v-if="token.channelInfo?.counterpartyChannelId" class="detail-item">
+            <span class="detail-label">Counterparty Channel:</span>
+            <span class="detail-value">{{ token.channelInfo.counterpartyChannelId }}</span>
           </div>
         </div>
       </div>
@@ -110,24 +107,7 @@ const formatIBCDenom = (denom) => {
   return denom
 }
 
-const formatBalance = (amount, decimals = 6) => {
-  if (!amount || amount === '0') return '0'
-  
-  try {
-    const divisor = Math.pow(10, decimals)
-    const value = parseFloat(amount) / divisor
-    
-    if (value === 0) return '0'
-    if (value < 0.000001) return value.toExponential(2)
-    if (value < 1) return value.toFixed(6).replace(/\.?0+$/, '')
-    if (value < 1000) return value.toFixed(2).replace(/\.?0+$/, '')
-    
-    return value.toLocaleString('en-US', { maximumFractionDigits: 2 })
-  } catch (error) {
-    console.error('Error formatting balance:', error)
-    return '0'
-  }
-}
+// Removed formatBalance function as balances are not displayed
 
 const copyToClipboard = async (text) => {
   if (!text) return
@@ -152,6 +132,34 @@ const queryDenomTrace = async (hash, restEndpoint) => {
     return data.denom
   } catch (error) {
     console.error(`Failed to query denom trace for ${hash}:`, error)
+    return null
+  }
+}
+
+const queryChannelInfo = async (channelId, restEndpoint, portId = 'transfer') => {
+  try {
+    // Fetch channel data
+    const channelResponse = await fetch(`${restEndpoint}/ibc/core/channel/v1/channels/${channelId}/ports/${portId}`)
+    if (!channelResponse.ok) return null
+    
+    const channelData = await channelResponse.json()
+    const connectionId = channelData.channel?.connection_hops?.[0]
+    
+    // Fetch counterparty chain info
+    const clientStateResponse = await fetch(`${restEndpoint}/ibc/core/channel/v1/channels/${channelId}/ports/${portId}/client_state`)
+    if (!clientStateResponse.ok) return null
+    
+    const clientStateData = await clientStateResponse.json()
+    const counterpartyChainId = clientStateData.identified_client_state?.client_state?.chain_id
+    
+    return {
+      channelId,
+      connectionId,
+      counterpartyChannelId: channelData.channel?.counterparty?.channel_id,
+      counterpartyChainId
+    }
+  } catch (error) {
+    console.error(`Failed to query channel info for ${channelId}:`, error)
     return null
   }
 }
@@ -215,18 +223,38 @@ const fetchIBCTokenInfo = async () => {
       
       if (tokenConfig) {
         // Use info from config
+        const hash = balance.denom.replace(/ibc\//i, '')
+        let sourceChain = 'Unknown'
+        let channelInfo = null
+        
+        // Extract channel from description if available
+        const channelMatch = tokenConfig.description?.match(/channel-(\d+)/i)
+        if (channelMatch) {
+          const channelId = channelMatch[0]
+          channelInfo = await queryChannelInfo(channelId, restEndpoint)
+          
+          // Determine source chain from counterparty chain ID
+          if (channelInfo?.counterpartyChainId) {
+            if (channelInfo.counterpartyChainId.includes('osmo')) {
+              sourceChain = 'Osmosis'
+            } else if (channelInfo.counterpartyChainId.includes('grand')) {
+              sourceChain = 'Noble'
+            } else {
+              sourceChain = channelInfo.counterpartyChainId
+            }
+          }
+        }
+        
         return {
           denom: balance.denom,
           baseDenom: tokenConfig.symbol?.toLowerCase() || 'unknown',
           name: tokenConfig.name || 'Unknown Token',
           symbol: tokenConfig.symbol || 'UNKNOWN',
           decimals: tokenConfig.decimals || 6,
-          balance: balance.amount,
           path: tokenConfig.description || '',
-          channels: tokenConfig.description?.match(/channel-\d+/gi) || [],
-          sourceChain: tokenConfig.description?.includes('Osmosis') ? 'Osmosis' : 
-                       tokenConfig.description?.includes('channel') ? 'IBC Chain' : 'Unknown',
-          hash: balance.denom.replace(/ibc\//i, '')
+          sourceChain,
+          channelInfo,
+          hash
         }
       } else {
         // Fallback for unknown IBC tokens
@@ -240,16 +268,34 @@ const fetchIBCTokenInfo = async () => {
           const channels = trace.trace?.map(t => t.channel_id) || []
           const symbol = baseDenom.startsWith('u') ? baseDenom.substring(1).toUpperCase() : baseDenom.toUpperCase()
           
+          let sourceChain = 'IBC Chain'
+          let channelInfo = null
+          
+          // Try to get channel info if we have channels
+          if (channels.length > 0) {
+            const firstChannel = channels[0]
+            channelInfo = await queryChannelInfo(firstChannel, restEndpoint)
+            
+            if (channelInfo?.counterpartyChainId) {
+              if (channelInfo.counterpartyChainId.includes('osmo')) {
+                sourceChain = 'Osmosis'
+              } else if (channelInfo.counterpartyChainId.includes('grand')) {
+                sourceChain = 'Noble'
+              } else {
+                sourceChain = channelInfo.counterpartyChainId
+              }
+            }
+          }
+          
           return {
             denom: balance.denom,
             baseDenom: baseDenom,
             name: symbol,
             symbol: symbol,
             decimals: 6,
-            balance: balance.amount,
             path: channels.length > 0 ? `transfer/${channels.join('/transfer/')}` : '',
-            channels: channels,
-            sourceChain: symbol === 'OSMO' ? 'Osmosis' : 'IBC Chain',
+            sourceChain,
+            channelInfo,
             hash
           }
         } else {
@@ -260,10 +306,9 @@ const fetchIBCTokenInfo = async () => {
             name: 'Unknown IBC Token',
             symbol: 'IBC',
             decimals: 6,
-            balance: balance.amount,
             path: '',
-            channels: [],
             sourceChain: 'Unknown',
+            channelInfo: null,
             hash
           }
         }
@@ -354,6 +399,25 @@ onMounted(async () => {
   border-radius: 12px;
   padding: 1.25rem;
   transition: all 0.2s ease;
+  position: relative;
+}
+
+/* Hide any injected balance displays */
+.ibc-token-card::before,
+.ibc-token-card::after,
+.ibc-token-card .balance-display,
+.ibc-token-card .token-balance,
+.ibc-token-card .user-balance,
+.ibc-token-card [class*="balance"],
+.ibc-token-card [style*="position: absolute"],
+.ibc-token-card [style*="float: right"],
+.ibc-token-card span.token-balance {
+  display: none !important;
+}
+
+/* Ensure no absolute positioned elements in upper-right */
+.ibc-token-card > * {
+  position: static !important;
 }
 
 .ibc-token-card:hover {
@@ -465,30 +529,6 @@ onMounted(async () => {
   color: var(--text-primary);
 }
 
-.channels-flow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
-  margin-top: 0.25rem;
-}
-
-.channel-badge {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 0.25rem 0.5rem;
-  font-size: 0.8rem;
-  font-family: monospace;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.channel-arrow {
-  font-size: 0.7rem;
-  color: var(--text-secondary);
-}
 
 .chain-name {
   color: var(--cosmos-accent);
@@ -526,11 +566,6 @@ onMounted(async () => {
   
   .detail-value {
     font-size: 0.75rem;
-  }
-  
-  .channels-flow {
-    flex-direction: column;
-    align-items: flex-start;
   }
 }
 </style>
