@@ -388,9 +388,9 @@ onMounted(async () => {
 }
 
 .ibc-tokens-grid {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
-  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
 }
 
 .ibc-token-card {
@@ -400,6 +400,7 @@ onMounted(async () => {
   padding: 1.25rem;
   transition: all 0.2s ease;
   position: relative;
+  width: 100%;
 }
 
 /* Hide any injected balance displays */
@@ -538,7 +539,6 @@ onMounted(async () => {
 /* Mobile responsiveness */
 @media (max-width: 768px) {
   .ibc-tokens-grid {
-    grid-template-columns: 1fr;
     gap: 0.75rem;
   }
   

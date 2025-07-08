@@ -76,7 +76,7 @@ import { useConfig } from '../composables/useConfig'
 const { config } = useConfig()
 const projectName = computed(() => config.value?.project?.name || 'Cosmos EVM Faucet')
 // Version will be updated with each deployment
-const version = '1.1.0'
+const version = '1.1.5'
 </script>
 
 <style scoped>
@@ -120,7 +120,7 @@ const version = '1.1.0'
 
 .version-badge {
   position: absolute;
-  bottom: 0;
+  bottom: -1.2rem;
   right: 0;
   font-family: monospace;
   font-size: 0.65rem;
@@ -213,7 +213,7 @@ const version = '1.1.0'
   .version-badge {
     font-size: 0.6rem;
     padding: 0.1rem 0.3rem;
-    bottom: -0.5rem;
+    bottom: -1rem;
   }
 
   .nav-icons {

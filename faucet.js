@@ -920,7 +920,8 @@ app.get('/send/:address', async (req, res) => {
                   return {
                     ...token,
                     symbol: 'WATOM',
-                    name: 'Wrapped ATOM'
+                    name: 'Wrapped ATOM',
+                    decimals: 18 // Ensure decimals is set to 18 for WATOM
                   };
                 }
                 return token;
@@ -1269,37 +1270,45 @@ async function checkRecipientBalances(address, addressType) {
         } else if (token.denom === 'uatom' && token.erc20_contract === '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE') {
           // WATOM is actually native ATOM on EVM, check native balance
           const balance = await ethProvider.getBalance(address);
+          // Convert target balance from 6 decimals (uatom) to 18 decimals (WATOM)
+          const targetIn6Decimals = BigInt(token.target_balance);
+          const targetIn18Decimals = targetIn6Decimals * BigInt(10 ** 12); // Convert 6 to 18 decimals
+          
           balances.push({
             denom: token.denom,
             current_amount: balance.toString(),
-            target_amount: token.target_balance,
-            decimals: 6 // Use ATOM's native 6 decimals
+            target_amount: targetIn18Decimals.toString(),
+            decimals: 18 // WATOM uses 18 decimals on EVM like ETH
           });
-        } else {
+        } else if (token.erc20_contract && token.erc20_contract !== null) {
           // ERC20 token balance
-          const erc20ABI = ["function balanceOf(address owner) view returns (uint256)"];
-          const tokenContract = new Contract(token.erc20_contract, erc20ABI, ethProvider);
-          const balance = await tokenContract.balanceOf(address);
-          balances.push({
-            denom: token.denom,
-            current_amount: balance.toString(),
-            target_amount: token.target_balance,
-            decimals: token.decimals
-          });
+          try {
+            const erc20ABI = ["function balanceOf(address owner) view returns (uint256)"];
+            const tokenContract = new Contract(token.erc20_contract, erc20ABI, ethProvider);
+            const balance = await tokenContract.balanceOf(address);
+            balances.push({
+              denom: token.denom,
+              current_amount: balance.toString(),
+              target_amount: token.target_balance,
+              decimals: token.decimals
+            });
+          } catch (tokenError) {
+            console.error(`Error checking balance for token ${token.denom}:`, tokenError);
+            // Only set this specific token balance to 0, not all tokens
+            balances.push({
+              denom: token.denom,
+              current_amount: "0",
+              target_amount: token.target_balance,
+              decimals: token.decimals
+            });
+          }
         }
       }
     }
   } catch (error) {
-    console.error('Error checking balances:', error);
-    // Return zero balances on error to allow faucet to proceed
-    for (const token of chainConf.tx.amounts) {
-      balances.push({
-        denom: token.denom,
-        current_amount: "0",
-        target_amount: token.target_balance,
-        decimals: token.decimals
-      });
-    }
+    console.error('Critical error checking balances:', error);
+    // Only throw for critical errors, token-specific errors are handled above
+    throw error;
   }
 
   return balances;
@@ -1487,6 +1496,8 @@ async function sendSmartEvmTx(recipientAddress, neededAmounts) {
     // If we have multiple tokens (ERC20s and/or native), use AtomicMultiSend
     if (neededAmounts.length > 1 || (erc20Tokens.length >= 1 && nativeTokens.length > 0)) {
       console.log('Using AtomicMultiSend contract for guaranteed atomicity');
+      console.log('ERC20 tokens to send:', erc20Tokens.length, erc20Tokens);
+      console.log('Native tokens to send:', nativeTokens.length, nativeTokens);
 
       const atomicMultiSendAddress = chainConf.contracts.atomicMultiSend;
       if (!atomicMultiSendAddress) {
@@ -1518,21 +1529,21 @@ async function sendSmartEvmTx(recipientAddress, neededAmounts) {
       });
 
       // Add native token transfers (address(0) represents native tokens)
+      // For EVM, all native tokens (WATOM) are aggregated into a single native transfer
       let totalNativeAmount = BigInt(0);
-      nativeTokens.forEach(t => {
-        // Only add one native token transfer
-        if (!seenTokens.has('native')) {
-          seenTokens.add('native');
-          transfers.push({
-            token: '0x0000000000000000000000000000000000000000', // address(0) for native
-            amount: t.amount
-          });
+      if (nativeTokens.length > 0) {
+        // Sum all native token amounts
+        nativeTokens.forEach(t => {
           totalNativeAmount += BigInt(t.amount);
-        } else {
-          // If we already have a native transfer, just add to the total
-          totalNativeAmount += BigInt(t.amount);
-        }
-      });
+        });
+        
+        // Add a single native transfer with the total amount
+        transfers.push({
+          token: '0x0000000000000000000000000000000000000000', // address(0) for native
+          amount: totalNativeAmount.toString()
+        });
+        seenTokens.add('native');
+      }
 
       // Safety check: ensure no duplicate tokens
       const tokenAddresses = transfers.map(t => t.token);

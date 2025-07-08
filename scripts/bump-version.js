@@ -21,4 +21,14 @@ const newVersion = `${parts[0]}.${parts[1]}.${patchVersion}`;
 packageJson.version = newVersion;
 fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2) + '\n');
 
+// Update Header.vue
+const headerPath = join(__dirname, '..', 'src', 'components', 'Header.vue');
+let headerContent = fs.readFileSync(headerPath, 'utf8');
+headerContent = headerContent.replace(
+  /const version = ['"][\d.]+['"]/,
+  `const version = '${newVersion}'`
+);
+fs.writeFileSync(headerPath, headerContent);
+
 console.log(`Version bumped from ${currentVersion} to ${newVersion}`);
+console.log('Updated: package.json and src/components/Header.vue');
