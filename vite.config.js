@@ -20,15 +20,40 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
-    chunkSizeWarningLimit: 2000,
+    chunkSizeWarningLimit: 500,
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html')
       },
       output: {
-        inlineDynamicImports: true,
         entryFileNames: 'assets/[name]-[hash].js',
-        assetFileNames: 'assets/[name]-[hash].[ext]'
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]',
+        manualChunks: {
+          'vendor': [
+            'vue',
+            '@vue/runtime-dom',
+            '@vue/runtime-core',
+            '@vue/shared',
+            '@vue/reactivity'
+          ],
+          'wallet': [
+            '@reown/appkit',
+            '@reown/appkit-adapter-wagmi',
+            '@wagmi/vue',
+            '@wagmi/core',
+            'viem'
+          ],
+          'cosmjs': [
+            '@cosmjs/stargate',
+            '@cosmjs/proto-signing',
+            '@cosmjs/crypto',
+            '@cosmjs/encoding'
+          ],
+          'ethers': [
+            'ethers'
+          ]
+        }
       }
     }
   },

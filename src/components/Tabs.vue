@@ -48,11 +48,13 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import NetworkInfo from './tabs/NetworkInfo.vue'
-import FaucetTab from './tabs/FaucetTab.vue'
-import RecentTransactionsTab from './tabs/RecentTransactionsTab.vue'
+import { ref, defineAsyncComponent } from 'vue'
 import { useTransactions } from '../composables/useTransactions'
+
+// Lazy load tab components for better code splitting
+const NetworkInfo = defineAsyncComponent(() => import('./tabs/NetworkInfo.vue'))
+const FaucetTab = defineAsyncComponent(() => import('./tabs/FaucetTab.vue'))
+const RecentTransactionsTab = defineAsyncComponent(() => import('./tabs/RecentTransactionsTab.vue'))
 
 const activeTab = ref('faucet')
 const { recentTransactions } = useTransactions()
